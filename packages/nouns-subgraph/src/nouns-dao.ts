@@ -1,4 +1,4 @@
-import { Bytes, log, ethereum, store, BigInt } from '@graphprotocol/graph-ts';
+import { Bytes, log, ethereum, store, BigInt, Address } from '@graphprotocol/graph-ts';
 import {
   ProposalCreatedWithRequirements,
   ProposalCreatedWithRequirements1,
@@ -21,6 +21,7 @@ import {
   JoinFork,
   ProposalCreatedOnTimelockV1,
   VoteSnapshotBlockSwitchProposalIdSet,
+  NounsDAO,
 } from './types/NounsDAO/NounsDAO';
 import {
   getOrCreateDelegate,
@@ -34,6 +35,7 @@ import {
   calcEncodedProposalHash,
 } from './utils/helpers';
 import {
+  BIGINT_ZERO,
   BIGINT_ONE,
   STATUS_ACTIVE,
   STATUS_QUEUED,
@@ -65,7 +67,9 @@ export function handleProposalCreatedWithRequirements(
 export function handleProposalCreatedWithRequirementsV3(
   event: ProposalCreatedWithRequirements,
 ): void {
-  handleProposalCreated(ParsedProposalV3.fromV3Event(event));
+  const contract = NounsDAO.bind(event.address);
+  const totalSupply = contract.adjustedTotalSupply();
+  handleProposalCreated(ParsedProposalV3.fromV3Event(event), totalSupply);
 }
 
 export function handleProposalCreatedOnTimelockV1(event: ProposalCreatedOnTimelockV1): void {
@@ -74,7 +78,10 @@ export function handleProposalCreatedOnTimelockV1(event: ProposalCreatedOnTimelo
   proposal.save();
 }
 
-export function handleProposalCreated(parsedProposal: ParsedProposalV3): void {
+export function handleProposalCreated(
+  parsedProposal: ParsedProposalV3,
+  adjustedTotalSupply: BigInt = BIGINT_ZERO,
+): void {
   let proposal = getOrCreateProposal(parsedProposal.id);
   let proposerResult = getOrCreateDelegateWithNullOption(parsedProposal.proposer);
 
@@ -127,8 +134,14 @@ export function handleProposalCreated(parsedProposal: ParsedProposalV3): void {
 
   // Storing state for dynamic quorum calculations
   // Doing these for V1 props as well to avoid making these fields optional + avoid missing required field warnings
+
   const governance = getGovernanceEntity();
-  proposal.totalSupply = governance.totalTokenHolders;
+
+  if (adjustedTotalSupply.equals(BIGINT_ZERO)) {
+    proposal.totalSupply = governance.totalTokenHolders;
+  } else {
+    proposal.totalSupply = adjustedTotalSupply;
+  }
 
   if (
     governance.voteSnapshotBlockSwitchProposalId.equals(BIGINT_ZERO) ||
